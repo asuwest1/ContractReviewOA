@@ -97,19 +97,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             return self._send_file(WEB_ROOT / "styles.css", "text/css; charset=utf-8")
 
         def run():
+            ctx = self._ctx()
             if path == "/api/workflows":
-                return service.list_workflows()
+                return service.list_workflows(ctx)
             if path.startswith("/api/workflows/"):
                 workflow_id = int(path.split("/")[3])
-                return service.get_workflow(workflow_id)
+                return service.get_workflow(workflow_id, ctx)
             if path == "/api/dashboard/summary":
-                return service.dashboard_summary()
+                return service.dashboard_summary(ctx)
             if path == "/api/dashboard/aging":
-                return service.dashboard_aging()
+                return service.dashboard_aging(ctx)
             if path == "/api/dashboard/pending":
-                return service.dashboard_pending()
+                return service.dashboard_pending(ctx)
             if path == "/api/dashboard/correction-queue":
-                return service.correction_queue()
+                return service.correction_queue(ctx)
             if path == "/api/admin/settings":
                 return service.get_settings()
             if path == "/api/admin/roles":
