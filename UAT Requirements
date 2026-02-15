@@ -1,0 +1,75 @@
+This User Acceptance Testing (UAT) Plan is designed to verify that the **PO & Contract Review Application** meets all business requirements and functions correctly within your Windows Server/AD environment.
+
+---
+
+## 1. UAT Strategy & Scope
+
+The goal is to simulate real-world scenarios, from task creation to the final "Golden PO" archival. Testing will be performed by representatives from **Customer Service**, **Technical Review**, and **Commercial/Legal** roles.
+
+---
+
+## 2. Test Scenarios & Scripts
+
+### Scenario A: Workflow Initiation & Role Assignment
+
+* **Test Case:** Customer Service initiates a new PO review.
+* **Expected Result:** * System allows file upload to the secure Windows File Share.
+* Initiator can assign specific AD users to Technical and Commercial roles.
+* Workflow status changes to "Reviewing".
+* SMTP notification is sent to all assigned approvers.
+
+
+
+### Scenario B: Parallel Approval & Electronic Sign-off
+
+* **Test Case:** Parallel reviewers (Technical and Commercial) perform sign-offs.
+* **Expected Result:** * Both users can access the document simultaneously.
+* Electronic sign-off captures AD Username, Date, and Timestamp.
+* Audit trail logs both actions independently.
+
+
+
+### Scenario C: Exception Management & "HOLD" Logic
+
+* **Test Case:** Reviewer finds a discrepancy and triggers a HOLD.
+* **Expected Result:** * The system flags the workflow with a "HOLD" status on the dashboard.
+* An email notification is sent to the initiator.
+* The "HOLD" remains active until a new version of the "Golden PO" is uploaded.
+
+
+
+### Scenario D: Rejection & Correction Queue
+
+* **Test Case:** A reviewer rejects a contract.
+* **Expected Result:** * Status changes to "Rejected".
+* All participants in the workflow receive a rejection email.
+* The item appears in the "Correction Queue" on the dashboard for Customer Service.
+
+
+
+### Scenario E: Aging Reminders & System Parameters
+
+* **Test Case:** A task sits idle past the first threshold (e.g., 2 days).
+* **Expected Result:** * The background service identifies the aging task based on system parameters.
+* A reminder email is sent to the pending approver.
+* The dashboard updates the "Reminder Level" visual indicator.
+
+
+
+---
+
+## 3. Approval Matrix
+
+| Feature | Pass/Fail | Tester Initials | Comments |
+| --- | --- | --- | --- |
+| AD Login/SSO |  |  |  |
+| File Share Upload |  |  |  |
+| SMTP Notifications |  |  |  |
+| Dashboard Accuracy |  |  |  |
+| Audit Trail Integrity |  |  |  |
+
+---
+
+## 4. Final Sign-off
+
+Upon successful completion of these scripts, the **Business Process Owner** will provide a formal electronic sign-off within the application to move the project to the **Production** environment.
