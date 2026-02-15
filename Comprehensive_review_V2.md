@@ -42,7 +42,7 @@ This is the second comprehensive review of the ContractReviewOA application. The
 | Auth Header Spoofing | **Confirmed CRITICAL** | Was partially mitigated (dev headers off by default). V2 finds additional role injection bug. Fixed. |
 | Missing HTTPS | **Confirmed HIGH** | Architecture concern — app is designed to run behind IIS with TLS termination. Added documentation comment. |
 | Missing Input Validation | **Confirmed HIGH** | Fixed in V2: length limits and format validation added. |
-| No Rate Limiting | **Confirmed HIGH** | Not fixed in code (requires infrastructure-level solution; documented). |
+| No Rate Limiting | **Confirmed HIGH** | Acknowledged. Risk is mitigated by internal-only deployment with no internet exposure and SSO/Windows Auth. Will consider adding IIS Dynamic IP Restrictions as a defense-in-depth measure in a future iteration. |
 | Insufficient Authorization | **Confirmed HIGH** | Partially fixed in V2: role checks added to `decide_step`. |
 | Information Disclosure | **Confirmed MEDIUM** | Already mitigated (generic 500 errors). |
 | Missing Security Headers | **Confirmed MEDIUM** | Fixed in V2: headers added to all responses. |
@@ -288,7 +288,7 @@ These items require infrastructure or architectural changes beyond the scope of 
 
 | Risk | Severity | Mitigation Path |
 |------|----------|-----------------|
-| **No rate limiting** | HIGH | Deploy behind reverse proxy (nginx/IIS) with rate limiting. Consider `slowapi` if migrating to ASGI. |
+| **No rate limiting** | HIGH | Acknowledged. Risk is mitigated by internal-only deployment with no internet exposure and SSO/Windows Auth. Will consider adding IIS Dynamic IP Restrictions as a defense-in-depth measure in a future iteration. |
 | **No full RBAC on workflow access** | HIGH | Requires product decision on access model (ownership vs. role-based vs. team-based). |
 | **No session management** | MEDIUM | In IIS deployment, Windows Integrated Auth handles sessions. For standalone, needs session framework. |
 | **No connection pooling** | LOW | Single-user or low-concurrency expected. For scale, use connection pool or migrate to async framework. |
