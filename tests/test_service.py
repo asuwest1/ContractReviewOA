@@ -86,3 +86,16 @@ def test_admin_settings_and_reminders(tmp_path):
     assert reminders["sent"] >= 1
     notifications = svc.get_notifications(wf["workflow_id"])
     assert any(n["event"] == "AgingReminder" for n in notifications)
+
+
+def test_add_document_rejects_path_traversal_filename(tmp_path):
+    svc = make_service(tmp_path)
+    ctx = RequestContext(user="alice", roles={"Customer Service"})
+    wf = svc.create_workflow({"title": "Contract-2", "steps": []}, ctx)
+
+    raised = False
+    try:
+        svc.add_document(wf["workflow_id"], {"filename": "../outside.txt", "content": "x"}, ctx)
+    except ValueError:
+        raised = True
+    assert raised

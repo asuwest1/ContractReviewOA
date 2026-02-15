@@ -89,3 +89,10 @@ def test_mssql_provider_initializes_with_fake_pyodbc(monkeypatch, tmp_path):
 
     svc = AppService(storage_root=str(tmp_path / "storage"))
     assert svc.db.provider == "mssql"
+
+
+def test_auth_resolver_disables_dev_headers_by_default(monkeypatch):
+    monkeypatch.delenv("ALLOW_DEV_HEADERS", raising=False)
+    ident = AuthResolver().resolve(DummyHeaders({"X-Remote-User": "dev-user", "X-User-Roles": "Admin"}))
+    assert ident.user == "anonymous"
+    assert "Admin" not in ident.roles

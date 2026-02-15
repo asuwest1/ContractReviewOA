@@ -54,8 +54,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.FORBIDDEN, {"error": str(exc)})
         except ValueError as exc:
             self._send(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
-        except Exception as exc:  # noqa: BLE001
-            self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+        except Exception:  # noqa: BLE001
+            self._send(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Internal server error"})
 
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)

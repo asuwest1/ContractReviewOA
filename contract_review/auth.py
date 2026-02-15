@@ -10,7 +10,7 @@ class Identity:
 
 class AuthResolver:
     def __init__(self):
-        self.allow_dev_headers = os.environ.get("ALLOW_DEV_HEADERS", "true").lower() == "true"
+        self.allow_dev_headers = os.environ.get("ALLOW_DEV_HEADERS", "false").lower() == "true"
         self.default_roles = {r.strip() for r in os.environ.get("DEFAULT_ROLES", "").split(",") if r.strip()}
 
     def resolve(self, headers) -> Identity:
