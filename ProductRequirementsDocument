@@ -1,0 +1,101 @@
+Gemini said
+Product Requirements Document (PRD): PO & Contract Review Application
+1. Project Overview
+This application is a standalone internal business tool designed to manage the review and approval of Purchase Orders (POs) and Contracts before customer orders are accepted. It ensures that all customer requirements are traceable through a formalized flow-up and flow-down process throughout the organization.
+
+2. Technical Infrastructure
+User Interface: Browser-based application.
+
+Web Server: Windows Server 2019 running Internet Information Services (IIS).
+
+Database: Microsoft SQL Server 2019 on a separate dedicated server.
+
+Authentication: Servers and users are Active Directory (AD) joined.
+
+File Storage: Attachments (e.g., "Golden POs") are stored on a secure Windows file share.
+
+3. Functional Requirements
+3.1 Workflow Management
+Initiation: Tasks are started by Customer Service for new POs and Contracts.
+
+Status Tracking: Workflows support multiple statuses: Active, Reviewing, Negotiating, Archived, In Review, Rejected, and Cancelled.
+
+Multi-Step Approvals: Support for parallel and sequential routing for technical and commercial sign-offs.
+
+Retrospective Inclusion: Ability to include existing contracts/POs already in use under an "In Review" status.
+
+3.2 Document Management
+"Golden PO": Tracking and attachment of the master active contract or PO.
+
+Version Control: Management of amendments, notes, and sub-tasks linked to the main document.
+
+Exception Handling: Comparison of incoming orders against the active "Golden PO" with the ability to trigger a "HOLD" if discrepancies are found.
+
+3.3 Role & User Management
+Role Definition: System-level ability to define business roles (e.g., Technical, Commercial, Legal).
+
+User Assignment: Mapping of users (Name and Email) to specific roles via AD.
+
+Workflow Assignment: Roles required for approval are identified at the start of each individual workflow.
+
+3.4 Notifications (SMTP)
+Trigger Events: Emails sent at workflow launch, upon rejection, and upon successful completion.
+
+Aging Reminders: Automated emails for pending approvals based on days since launch.
+
+System Parameters: Five configurable system values for specific aging thresholds (e.g., 2, 5, 10, 15, and 30 days).
+
+4. Database Schema (MS SQL 2019)
+Core Table Structures
+SQL
+-- Main Workflow tracking
+CREATE TABLE Workflows (
+    WorkflowID INT PRIMARY KEY IDENTITY(1,1),
+    Title NVARCHAR(255),
+    DocType NVARCHAR(50), -- PO or Contract
+    CurrentStatus NVARCHAR(50),
+    IsHold BIT DEFAULT 0,
+    CreatedDate DATETIME2 DEFAULT GETDATE()
+);
+
+-- Documentation mapping
+CREATE TABLE WorkflowDocuments (
+    DocID INT PRIMARY KEY IDENTITY(1,1),
+    WorkflowID INT FOREIGN KEY REFERENCES Workflows(WorkflowID),
+    FilePath NVARCHAR(500), -- Path to Windows File Share
+    IsGolden BIT DEFAULT 0,
+    Version INT
+);
+
+-- Approval steps and routing
+CREATE TABLE WorkflowSteps (
+    StepID INT PRIMARY KEY IDENTITY(1,1),
+    WorkflowID INT FOREIGN KEY REFERENCES Workflows(WorkflowID),
+    RequiredRoleID INT,
+    StepStatus NVARCHAR(50),
+    AssignedDate DATETIME2
+);
+5. API Endpoints
+Category	Endpoint	Method	Action
+Workflows	/api/workflows	POST	Create new review task and upload document
+Workflows	/api/workflows/{id}/hold	PUT	Activate/Deactivate HOLD status
+Approvals	/api/approvals/{id}/decide	POST	Record Approve/Reject decision with timestamp
+Dashboard	/api/dashboard/aging	GET	Retrieve workflows exceeding aging thresholds
+Admin	/api/admin/settings	PUT	Update the 5 aging reminder parameters
+6. Dashboard Requirements
+A real-time dashboard is required to show:
+
+Workflows in Process: Overview of all active reviews.
+
+Pending Approvals: Visibility into which roles are currently assigned a task.
+
+Aging Items: Identification of tasks exceeding the 5 specified day thresholds.
+
+Correction Queue: A specific section highlighting rejected items that have not yet been resubmitted.
+
+7. Audit & Compliance
+Traceability: A trackable and auditable record for every requirement flow-up and flow-down.
+
+Electronic Sign-off: Every approval must record the user name, date, and timestamp.
+
+History Logs: Full record-keeping of all approvers and status changes for compliance audits.
