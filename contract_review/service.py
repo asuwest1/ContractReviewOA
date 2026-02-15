@@ -327,12 +327,15 @@ class AppService:
             if existing and int(existing["c"]) > 0:
                 raise ValueError("Only one Golden document is allowed per workflow")
         version = int(document.get("version", 1))
-        filename = document.get("filename", f"workflow_{workflow_id}_v{version}.txt")
+        raw_filename = document.get("filename", f"workflow_{workflow_id}_v{version}.txt")
+        filename = Path(raw_filename).name
+        if filename != raw_filename or filename in {"", ".", ".."}:
+            raise ValueError("Invalid filename")
         folder = self._status_folder(current_status)
         local_dir = self.storage_root / folder
         local_dir.mkdir(parents=True, exist_ok=True)
         if content := document.get("content"):
-            (local_dir / filename).write_text(content)
+            (local_dir / filename).write_text(content, encoding="utf-8")
         unc_path = f"\\\\FQDN\\Subfolder\\{folder}\\{filename}"
         self.db.execute(
             "INSERT INTO workflow_documents(workflow_id, file_path, is_golden, version, note, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
