@@ -1,7 +1,13 @@
+import logging
 import os
+import re
 import smtplib
 from email.message import EmailMessage
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_EMAIL_RE = re.compile(r"^[^@\s\r\n]+@[^@\s\r\n]+\.[^@\s\r\n]+$")
 
 
 class SmtpMailer:
@@ -19,6 +25,9 @@ class SmtpMailer:
 
     def send_event(self, recipient: str, event: str, payload: dict[str, Any]) -> bool:
         if not self.enabled:
+            return False
+        if not _EMAIL_RE.match(recipient):
+            logger.warning("Invalid email recipient skipped: %s", recipient)
             return False
         message = EmailMessage()
         message["From"] = self.sender

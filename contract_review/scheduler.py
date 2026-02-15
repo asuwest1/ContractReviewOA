@@ -1,8 +1,11 @@
+import logging
 import os
 import threading
 import time
 
 from contract_review.service import RequestContext
+
+logger = logging.getLogger(__name__)
 
 
 class ReminderScheduler:
@@ -36,5 +39,4 @@ class ReminderScheduler:
             try:
                 self.service.run_aging_reminders(ctx)
             except Exception:
-                # Keep scheduler alive; failures can be audited/logged externally.
-                pass
+                logger.exception("Reminder scheduler error")

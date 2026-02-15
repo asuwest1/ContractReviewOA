@@ -1,5 +1,8 @@
+import logging
 import os
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,12 +30,15 @@ class AuthResolver:
         if env_groups:
             roles.update({r.strip() for r in env_groups.replace(";", ",").split(",") if r.strip()})
 
+        user_from_env = bool(user)
+
         if not user and self.allow_dev_headers:
             user = headers.get("X-Remote-User", "")
-        if self.allow_dev_headers:
+        if self.allow_dev_headers and not user_from_env:
             roles.update({r.strip() for r in headers.get("X-User-Roles", "").split(",") if r.strip()})
 
         if not user:
             user = "anonymous"
+            logger.warning("No authenticated user resolved; falling back to anonymous")
 
         return Identity(user=user, roles=roles)
