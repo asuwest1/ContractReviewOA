@@ -1,65 +1,105 @@
 # Contract Review OA - Full Stack V1
 
-This repository includes a runnable full-stack V1 implementation (frontend + backend) for PO/Contract review workflows.
+Contract Review OA is a lightweight full-stack application for purchase-order and contract review workflows, including approvals, aging reminders, role-based administration, and an in-browser operations console.
 
-## Run
+## Installation
 
+### 1) Prerequisites
+- Python 3.10+
+- `pip`
+- (Optional) SQL Server ODBC driver if using MS SQL Server (`ODBC Driver 18 for SQL Server`)
+
+### 2) Clone and install dependencies
+```bash
+git clone <your-repo-url>
+cd ContractReviewOA
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+### 3) Run the server
 ```bash
 python3 -m contract_review.server
 ```
 
-Open: `http://localhost:8000`
+Application URL: `http://localhost:8000`
 
-## Database configuration
+### 4) Run tests
+```bash
+pytest
+```
 
-### SQLite (default)
+---
+
+## Configuration
+
+The application is configured through environment variables.
+
+### Core runtime
+- `PORT` (default: `8000`)
+- `CONTRACT_REVIEW_STORAGE` (default: `storage`)
+
+### Database configuration
+
+#### SQLite (default)
 - `CONTRACT_REVIEW_DB_PROVIDER=sqlite`
 - `CONTRACT_REVIEW_DB=contract_review.db`
 
-### MS SQL Server
+#### MS SQL Server
 - `CONTRACT_REVIEW_DB_PROVIDER=mssql`
 - `CONTRACT_REVIEW_MSSQL_CONNECTION="Driver={ODBC Driver 18 for SQL Server};Server=<server>;Database=<db>;Trusted_Connection=yes;TrustServerCertificate=yes;"`
 
-MS SQL schema is included at `contract_review/sql/mssql_schema.sql` and applied automatically at startup.
+The SQL Server schema is in `contract_review/sql/mssql_schema.sql` and is applied automatically at startup.
 
-## Authentication model (task #1)
+### Authentication model
 
-- Production target is AD Integrated Auth (IIS/Windows auth) via `REMOTE_USER` / `LOGON_USER` server variables.
-- Role/group hydration can be provided through `REMOTE_GROUPS` (comma/semicolon delimited).
-- Local fallback headers are available for development and can be disabled:
-  - `ALLOW_DEV_HEADERS=true|false` (default `true`)
-  - `X-Remote-User`
-  - `X-User-Roles`
+Production target is AD-integrated authentication (for example, IIS/Windows Auth) via server variables:
+- `REMOTE_USER` or `LOGON_USER`
+- `REMOTE_GROUPS` (comma/semicolon-delimited)
 
-## SMTP notifications (task #2)
+Local development fallback headers are supported and can be disabled:
+- `ALLOW_DEV_HEADERS=true|false` (default: `true`)
+- `X-Remote-User`
+- `X-User-Roles`
 
-Notification events are recorded in DB and can be sent via SMTP when configured:
+### SMTP notifications
 
+Notification events are saved in the database and can also be delivered via SMTP when configured:
 - `SMTP_HOST`
-- `SMTP_PORT` (default `25`)
+- `SMTP_PORT` (default: `25`)
 - `SMTP_SENDER`
 - `SMTP_USERNAME` / `SMTP_PASSWORD` (optional)
 - `SMTP_STARTTLS=true|false`
 
-## Reminder scheduler (task #3)
+### Reminder scheduler
 
-A built-in background scheduler can trigger aging reminders automatically:
-
+A built-in background scheduler can run aging reminders automatically:
 - `REMINDER_INTERVAL_SECONDS` (set `> 0` to enable)
-- `SYSTEM_USER` (default `system.scheduler`)
+- `SYSTEM_USER` (default: `system.scheduler`)
 
-Manual trigger endpoint is also available: `POST /api/system/run-reminders`.
+Manual trigger endpoint:
+- `POST /api/system/run-reminders`
 
-## Functional scope implemented
+---
 
-- Workflow lifecycle (all required statuses, hold/release, rejection/resubmission)
+## User documentation
+
+For step-by-step UI usage instructions, see:
+- [`docs/USER_DOCUMENTATION.md`](docs/USER_DOCUMENTATION.md)
+
+---
+
+## Feature scope implemented
+
+- Workflow lifecycle: status transitions, hold/release, rejection/resubmission
 - Parallel/sequential approval-step metadata and decision processing
 - Golden PO single-document enforcement
 - Append-only audit logging
-- Dashboard summary + pending approvals + aging + correction queue
-- Admin settings, roles, and user-role mapping
+- Dashboard summary, pending approvals, aging, correction queue
+- Admin settings, roles, user-role mapping
 - Aging reminder execution endpoint (`POST /api/system/run-reminders`)
-- Frontend UI for creating workflows and viewing dashboard/workflow details
+- Frontend for creating workflows and viewing dashboard/workflow details
 
 ## Core API endpoints
 
