@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +10,9 @@ from contract_review.auth import AuthResolver
 from contract_review.scheduler import ReminderScheduler
 from contract_review.service import AppService, RequestContext
 
+logger = logging.getLogger(__name__)
+
+MAX_REQUEST_BODY = 10 * 1024 * 1024  # 10 MB
 
 service = AppService(storage_root=os.environ.get("CONTRACT_REVIEW_STORAGE", "storage"))
 auth_resolver = AuthResolver()
@@ -21,6 +25,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
             return {}
+        if length > MAX_REQUEST_BODY:
+            raise ValueError(f"Request body too large (max {MAX_REQUEST_BODY} bytes)")
         body = self.rfile.read(length)
         return json.loads(body.decode("utf-8"))
 
@@ -28,11 +34,18 @@ class ApiHandler(BaseHTTPRequestHandler):
         ident = auth_resolver.resolve(self.headers)
         return RequestContext(user=ident.user, roles=ident.roles)
 
+    def _security_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+
     def _send(self, status: int, payload):
         raw = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         self.wfile.write(raw)
 
@@ -41,8 +54,22 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Security-Policy", "default-src 'self'")
+        self._security_headers()
         self.end_headers()
         self.wfile.write(data)
+
+    def _check_csrf(self) -> bool:
+        """Validate Origin header for state-changing requests."""
+        origin = self.headers.get("Origin", "")
+        if not origin:
+            return True  # non-browser clients (curl, etc.) don't send Origin
+        parsed_origin = urlparse(origin)
+        host_header = self.headers.get("Host", "")
+        if parsed_origin.netloc == host_header:
+            return True
+        logger.warning("CSRF check failed: Origin=%s Host=%s", origin, host_header)
+        return False
 
     def _handle(self, fn):
         try:
@@ -98,6 +125,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._handle(run)
 
     def do_POST(self):  # noqa: N802
+        if not self._check_csrf():
+            return self._send(HTTPStatus.FORBIDDEN, {"error": "Origin not allowed"})
         path = urlparse(self.path).path
 
         def run():
@@ -120,6 +149,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._handle(run)
 
     def do_PUT(self):  # noqa: N802
+        if not self._check_csrf():
+            return self._send(HTTPStatus.FORBIDDEN, {"error": "Origin not allowed"})
         path = urlparse(self.path).path
 
         def run():

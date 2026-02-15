@@ -1,6 +1,16 @@
 const $ = (id) => document.getElementById(id);
 let selectedWorkflowId = null;
 
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function headers() {
   return {
     'Content-Type': 'application/json',
@@ -23,8 +33,8 @@ async function loadDashboard() {
     api('/api/dashboard/aging')
   ]);
   $('summary').textContent = JSON.stringify(summary, null, 2);
-  $('pending').innerHTML = pending.map(p => `<li>#${p.workflow_id} ${p.title} - ${p.required_role} -> ${p.assigned_to || 'unassigned'}</li>`).join('');
-  $('aging').innerHTML = aging.map(a => `<li>#${a.workflowId} ${a.title} (${a.daysOpen}d, level ${a.reminderLevel})</li>`).join('');
+  $('pending').innerHTML = pending.map(p => `<li>#${escapeHtml(p.workflow_id)} ${escapeHtml(p.title)} - ${escapeHtml(p.required_role)} -&gt; ${escapeHtml(p.assigned_to) || 'unassigned'}</li>`).join('');
+  $('aging').innerHTML = aging.map(a => `<li>#${escapeHtml(a.workflowId)} ${escapeHtml(a.title)} (${escapeHtml(a.daysOpen)}d, level ${escapeHtml(a.reminderLevel)})</li>`).join('');
 }
 
 async function loadSettings() {
@@ -39,7 +49,7 @@ async function loadSettings() {
 async function loadWorkflows() {
   const data = await api('/api/workflows');
   $('workflows').innerHTML = data
-    .map(w => `<li><button data-id="${w.workflow_id}">#${w.workflow_id}</button> ${w.title} [${w.current_status}] ${w.is_hold ? '⛔HOLD' : ''}</li>`)
+    .map(w => `<li><button data-id="${escapeHtml(w.workflow_id)}">#${escapeHtml(w.workflow_id)}</button> ${escapeHtml(w.title)} [${escapeHtml(w.current_status)}] ${w.is_hold ? '⛔HOLD' : ''}</li>`)
     .join('');
   document.querySelectorAll('#workflows button').forEach(b => b.onclick = () => loadDetail(Number(b.dataset.id)));
 }
@@ -48,9 +58,9 @@ function renderStepActions(workflow) {
   const pendingSteps = (workflow.steps || []).filter(s => s.step_status === 'Pending');
   $('step-actions').innerHTML = pendingSteps.map(s => `
     <li>
-      Step ${s.step_id}: ${s.required_role} -> ${s.assigned_to || 'unassigned'}
-      <button data-step="${s.step_id}" data-decision="Approve">Approve</button>
-      <button data-step="${s.step_id}" data-decision="Reject">Reject</button>
+      Step ${escapeHtml(s.step_id)}: ${escapeHtml(s.required_role)} -&gt; ${escapeHtml(s.assigned_to) || 'unassigned'}
+      <button data-step="${escapeHtml(s.step_id)}" data-decision="Approve">Approve</button>
+      <button data-step="${escapeHtml(s.step_id)}" data-decision="Reject">Reject</button>
     </li>
   `).join('') || '<li>No pending steps</li>';
 

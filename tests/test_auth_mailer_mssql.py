@@ -96,3 +96,26 @@ def test_auth_resolver_disables_dev_headers_by_default(monkeypatch):
     ident = AuthResolver().resolve(DummyHeaders({"X-Remote-User": "dev-user", "X-User-Roles": "Admin"}))
     assert ident.user == "anonymous"
     assert "Admin" not in ident.roles
+
+
+def test_auth_resolver_blocks_role_injection_when_user_from_env(monkeypatch):
+    """V2-02: When user comes from IIS env vars, X-User-Roles header must be ignored
+    even if ALLOW_DEV_HEADERS is true."""
+    monkeypatch.setenv("REMOTE_USER", "CORP\\alice")
+    monkeypatch.delenv("REMOTE_GROUPS", raising=False)
+    monkeypatch.setenv("ALLOW_DEV_HEADERS", "true")
+    ident = AuthResolver().resolve(DummyHeaders({"X-User-Roles": "Admin,SuperUser"}))
+    assert ident.user == "CORP\\alice"
+    # Injected roles must NOT be present since user came from env
+    assert "Admin" not in ident.roles
+    assert "SuperUser" not in ident.roles
+
+
+def test_mailer_rejects_invalid_email(monkeypatch):
+    """V2-09: Invalid email recipients are skipped."""
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.local")
+    mailer = SmtpMailer()
+    # Header injection attempt
+    assert mailer.send_event("victim@corp\r\nBCC: attacker@evil.com", "Test", {}) is False
+    # Missing domain
+    assert mailer.send_event("nodomain", "Test", {}) is False

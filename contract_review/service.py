@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -7,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from contract_review.mailer import SmtpMailer
+
+logger = logging.getLogger(__name__)
 
 ISO = "%Y-%m-%dT%H:%M:%SZ"
 ALLOWED_STATUSES = {
@@ -19,6 +23,12 @@ ALLOWED_STATUSES = {
     "Cancelled",
 }
 IN_PROCESS_STATUSES = {"Active", "Reviewing", "Negotiating", "In Review"}
+ALLOWED_DOC_TYPES = {"PO", "Contract"}
+ALLOWED_SETTING_KEYS = {f"aging_threshold_{i}" for i in range(1, 6)}
+MAX_TITLE_LENGTH = 255
+MAX_COMMENT_LENGTH = 2000
+MAX_REASON_LENGTH = 1000
+MAX_ROLE_NAME_LENGTH = 100
 
 
 @dataclass
@@ -49,7 +59,7 @@ class DbClient:
 
     def _connect(self):
         if self.provider == "sqlite":
-            conn = sqlite3.connect(self.connection_string)
+            conn = sqlite3.connect(self.connection_string, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             return conn
         if self.provider == "mssql":
@@ -122,6 +132,7 @@ class AppService:
         self.db = DbClient(provider, connection_string)
         self.storage_root = Path(storage_root)
         self.storage_root.mkdir(parents=True, exist_ok=True)
+        self.unc_base = os.environ.get("CONTRACT_REVIEW_UNC_BASE", r"\\FQDN\Subfolder")
         self.mailer = SmtpMailer()
         self._init_db()
 
@@ -284,8 +295,12 @@ class AppService:
             raise PermissionError("Admin role required")
 
     def create_workflow(self, payload: dict[str, Any], ctx: RequestContext) -> dict[str, Any]:
-        title = payload["title"]
+        title = str(payload.get("title", "")).strip()
+        if not title or len(title) > MAX_TITLE_LENGTH:
+            raise ValueError(f"Title is required and must be at most {MAX_TITLE_LENGTH} characters")
         doc_type = payload.get("docType", "PO")
+        if doc_type not in ALLOWED_DOC_TYPES:
+            raise ValueError(f"docType must be one of: {', '.join(sorted(ALLOWED_DOC_TYPES))}")
         status = payload.get("initialStatus", "Reviewing")
         if status not in ALLOWED_STATUSES:
             raise ValueError("Invalid initial status")
@@ -328,6 +343,8 @@ class AppService:
                 raise ValueError("Only one Golden document is allowed per workflow")
         version = int(document.get("version", 1))
         raw_filename = document.get("filename", f"workflow_{workflow_id}_v{version}.txt")
+        if "\x00" in raw_filename:
+            raise ValueError("Invalid filename")
         filename = Path(raw_filename).name
         if filename != raw_filename or filename in {"", ".", ".."}:
             raise ValueError("Invalid filename")
@@ -336,7 +353,7 @@ class AppService:
         local_dir.mkdir(parents=True, exist_ok=True)
         if content := document.get("content"):
             (local_dir / filename).write_text(content, encoding="utf-8")
-        unc_path = f"\\\\FQDN\\Subfolder\\{folder}\\{filename}"
+        unc_path = f"{self.unc_base}\\{folder}\\{filename}"
         self.db.execute(
             "INSERT INTO workflow_documents(workflow_id, file_path, is_golden, version, note, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (workflow_id, unc_path, is_golden, version, document.get("note"), ctx.user, utc_now()),
@@ -358,6 +375,8 @@ class AppService:
     def update_status(self, workflow_id: int, status: str, reason: str, ctx: RequestContext) -> dict[str, Any]:
         if status not in ALLOWED_STATUSES:
             raise ValueError("Invalid status")
+        if len(reason) > MAX_REASON_LENGTH:
+            raise ValueError(f"Reason must be at most {MAX_REASON_LENGTH} characters")
         current = self.db.fetchone_dict(self.db.execute("SELECT current_status, created_by FROM workflows WHERE workflow_id = ?", (workflow_id,)))
         if not current:
             raise KeyError("Workflow not found")
@@ -396,19 +415,25 @@ class AppService:
         decision = payload["decision"]
         if decision not in {"Approve", "Reject"}:
             raise ValueError("Decision must be Approve or Reject")
+        comment = str(payload.get("comment", ""))
+        if len(comment) > MAX_COMMENT_LENGTH:
+            raise ValueError(f"Comment must be at most {MAX_COMMENT_LENGTH} characters")
         step = self.db.fetchone_dict(self.db.execute("SELECT * FROM workflow_steps WHERE step_id = ?", (step_id,)))
         if not step:
             raise KeyError("Step not found")
+        required_role = step["required_role"]
+        if required_role not in ctx.roles and "Admin" not in ctx.roles:
+            raise PermissionError(f"Role '{required_role}' is required to decide this step")
 
-        self.db.execute("UPDATE workflow_steps SET step_status = ?, decision_by = ?, decision_date = ?, decision = ?, decision_comment = ? WHERE step_id = ?", ("Completed", ctx.user, utc_now(), decision, payload.get("comment"), step_id))
-        self.db.execute("INSERT INTO approval_decisions(workflow_id, step_id, decision, comment, decided_by, decided_at) VALUES (?, ?, ?, ?, ?, ?)", (step["workflow_id"], step_id, decision, payload.get("comment"), ctx.user, utc_now()))
+        self.db.execute("UPDATE workflow_steps SET step_status = ?, decision_by = ?, decision_date = ?, decision = ?, decision_comment = ? WHERE step_id = ?", ("Completed", ctx.user, utc_now(), decision, comment, step_id))
+        self.db.execute("INSERT INTO approval_decisions(workflow_id, step_id, decision, comment, decided_by, decided_at) VALUES (?, ?, ?, ?, ?, ?)", (step["workflow_id"], step_id, decision, comment, ctx.user, utc_now()))
         self._audit("approval", str(step_id), "decide", ctx.user, {"decision": decision})
 
         workflow = self.db.fetchone_dict(self.db.execute("SELECT * FROM workflows WHERE workflow_id = ?", (step["workflow_id"],)))
         if decision == "Reject":
             self.db.execute("UPDATE workflows SET current_status = 'Rejected', resubmitted = 0, updated_date = ? WHERE workflow_id = ?", (utc_now(), step["workflow_id"]))
             self.db.execute("INSERT INTO status_history(workflow_id, old_status, new_status, changed_by, changed_at, reason) VALUES (?, ?, ?, ?, ?, ?)", (step["workflow_id"], workflow["current_status"], "Rejected", ctx.user, utc_now(), "Rejected by approver"))
-            self._notify(step["workflow_id"], "WorkflowRejected", [workflow["created_by"]], {"comment": payload.get("comment")})
+            self._notify(step["workflow_id"], "WorkflowRejected", [workflow["created_by"]], {"comment": comment})
         else:
             pending = self.db.fetchone_dict(self.db.execute("SELECT COUNT(*) AS c FROM workflow_steps WHERE workflow_id = ? AND step_status = 'Pending'", (step["workflow_id"],)))
             if int(pending["c"]) == 0:
@@ -475,6 +500,9 @@ class AppService:
 
     def update_settings(self, payload: dict[str, Any], ctx: RequestContext) -> dict[str, str]:
         self._require_admin(ctx)
+        invalid_keys = set(payload.keys()) - ALLOWED_SETTING_KEYS
+        if invalid_keys:
+            raise ValueError(f"Unknown setting keys: {', '.join(sorted(invalid_keys))}")
         for key, value in payload.items():
             self._upsert_setting(key, str(value))
         self._audit("system_settings", "global", "update", ctx.user, payload)
@@ -486,7 +514,11 @@ class AppService:
 
     def create_role(self, payload: dict[str, Any], ctx: RequestContext) -> list[str]:
         self._require_admin(ctx)
-        role = payload["roleName"]
+        role = str(payload.get("roleName", "")).strip()
+        if not role or len(role) > MAX_ROLE_NAME_LENGTH:
+            raise ValueError(f"Role name is required and must be at most {MAX_ROLE_NAME_LENGTH} characters")
+        if not re.match(r"^[A-Za-z0-9 ]+$", role):
+            raise ValueError("Role name may only contain letters, digits, and spaces")
         exists = self.db.fetchone_dict(self.db.execute("SELECT role_name FROM roles WHERE role_name = ?", (role,)))
         if not exists:
             self.db.execute("INSERT INTO roles(role_name) VALUES (?)", (role,))
