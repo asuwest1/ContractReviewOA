@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Contract Review OA</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>PO & Contract Review</h1>
+    <div class="auth">
+      <input id="user" placeholder="User (e.g. alice@corp)" value="alice" />
+      <input id="roles" placeholder="Roles (comma separated)" value="Admin,Customer Service" />
+      <button id="refresh">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Create Workflow</h2>
+      <form id="create-form" class="form-grid">
+        <input id="title" placeholder="Title" required />
+        <select id="docType"><option>PO</option><option>Contract</option></select>
+        <textarea id="docContent" placeholder="Initial document content"></textarea>
+        <button type="submit">Create</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Dashboard</h2>
+      <pre id="summary"></pre>
+      <h3>Pending Approvals</h3>
+      <ul id="pending"></ul>
+      <h3>Aging Items</h3>
+      <ul id="aging"></ul>
+      <button id="run-reminders">Run Aging Reminders (Admin)</button>
+    </section>
+
+    <section class="card">
+      <h2>Workflows</h2>
+      <ul id="workflows"></ul>
+    </section>
+
+    <section class="card wide">
+      <h2>Workflow Actions</h2>
+      <div id="selected-label">Selected: none</div>
+
+      <div class="action-row">
+        <select id="newStatus">
+          <option>Active</option><option>Reviewing</option><option>Negotiating</option>
+          <option>Archived</option><option>In Review</option><option>Rejected</option><option>Cancelled</option>
+        </select>
+        <input id="statusReason" placeholder="Status reason" />
+        <button id="set-status">Update Status</button>
+      </div>
+
+      <div class="action-row">
+        <select id="holdValue"><option value="true">Set HOLD</option><option value="false">Release HOLD</option></select>
+        <input id="holdReason" placeholder="HOLD reason" />
+        <button id="set-hold">Apply HOLD</button>
+      </div>
+
+      <div class="action-row">
+        <input id="docName" placeholder="Document filename" />
+        <input id="docVersion" type="number" value="1" min="1" />
+        <label><input id="docGolden" type="checkbox" /> Golden</label>
+        <label><input id="docResub" type="checkbox" /> Resubmission</label>
+        <button id="add-document">Add Document</button>
+      </div>
+      <textarea id="docBody" placeholder="Document content"></textarea>
+
+      <h3>Pending Steps (Approve/Reject)</h3>
+      <ul id="step-actions"></ul>
+
+      <h3>Admin Settings</h3>
+      <div class="action-row">
+        <input id="s1" type="number" placeholder="aging_threshold_1" />
+        <input id="s2" type="number" placeholder="aging_threshold_2" />
+        <input id="s3" type="number" placeholder="aging_threshold_3" />
+        <input id="s4" type="number" placeholder="aging_threshold_4" />
+        <input id="s5" type="number" placeholder="aging_threshold_5" />
+        <button id="save-settings">Save Settings</button>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <h2>Workflow Detail</h2>
+      <pre id="detail">Select a workflow</pre>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
