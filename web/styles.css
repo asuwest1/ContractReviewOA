@@ -1,0 +1,12 @@
+body { font-family: Arial, sans-serif; margin: 0; background: #f4f6f8; }
+header { background: #1f2937; color: white; padding: 12px 20px; display:flex; justify-content:space-between; align-items:center; }
+.auth input { margin-right:8px; }
+main { padding: 16px; display:grid; gap:16px; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); }
+.card { background:white; border-radius:8px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
+.card.wide { grid-column: 1 / -1; }
+ul { max-height:220px; overflow:auto; }
+button { cursor:pointer; }
+pre { background:#f0f2f5; padding:8px; overflow:auto; max-height:320px; }
+.form-grid, .action-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+input, select, textarea, button { padding:8px; }
+textarea { min-height: 72px; width: 100%; }
