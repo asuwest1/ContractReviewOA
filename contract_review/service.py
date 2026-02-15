@@ -30,6 +30,30 @@ MAX_COMMENT_LENGTH = 2000
 MAX_REASON_LENGTH = 1000
 MAX_ROLE_NAME_LENGTH = 100
 
+# --- RBAC Permission Constants ---
+PERM_WORKFLOW_CREATE = "workflow:create"
+PERM_WORKFLOW_VIEW_ALL = "workflow:view_all"
+PERM_WORKFLOW_MANAGE_ALL = "workflow:manage_all"
+PERM_DASHBOARD_FULL = "dashboard:full"
+PERM_ADMIN_SETTINGS = "admin:settings"
+PERM_ADMIN_ROLES = "admin:roles"
+PERM_SYSTEM_REMINDERS = "system:reminders"
+
+ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "Admin": {
+        PERM_WORKFLOW_CREATE,
+        PERM_WORKFLOW_VIEW_ALL,
+        PERM_WORKFLOW_MANAGE_ALL,
+        PERM_DASHBOARD_FULL,
+        PERM_ADMIN_SETTINGS,
+        PERM_ADMIN_ROLES,
+        PERM_SYSTEM_REMINDERS,
+    },
+    "Customer Service": {
+        PERM_WORKFLOW_CREATE,
+    },
+}
+
 
 @dataclass
 class RequestContext:
@@ -294,7 +318,60 @@ class AppService:
         if "Admin" not in ctx.roles:
             raise PermissionError("Admin role required")
 
+    # --- RBAC helpers ---
+
+    def _get_permissions(self, ctx: RequestContext) -> set[str]:
+        """Get the union of all permissions for the user's roles."""
+        perms: set[str] = set()
+        for role in ctx.roles:
+            perms.update(ROLE_PERMISSIONS.get(role, set()))
+        return perms
+
+    def _has_permission(self, ctx: RequestContext, permission: str) -> bool:
+        return permission in self._get_permissions(ctx)
+
+    def _is_workflow_participant(self, workflow_id: int, ctx: RequestContext, workflow: dict[str, Any] | None = None) -> bool:
+        """Check if user is a participant in a workflow (creator, assigned to a step, or has matching role for a step)."""
+        if workflow is None:
+            workflow = self.db.fetchone_dict(self.db.execute(
+                "SELECT created_by FROM workflows WHERE workflow_id = ?", (workflow_id,)))
+        if not workflow:
+            return False
+        if workflow.get("created_by") == ctx.user:
+            return True
+        steps = self.db.fetchall_dict(self.db.execute(
+            "SELECT assigned_to, required_role FROM workflow_steps WHERE workflow_id = ?", (workflow_id,)))
+        for step in steps:
+            if step["assigned_to"] == ctx.user:
+                return True
+            if step["required_role"] in ctx.roles:
+                return True
+        return False
+
+    def _require_workflow_access(self, workflow_id: int, ctx: RequestContext, workflow: dict[str, Any] | None = None) -> None:
+        """Raise PermissionError if user cannot access the workflow."""
+        if self._has_permission(ctx, PERM_WORKFLOW_VIEW_ALL):
+            return
+        if not self._is_workflow_participant(workflow_id, ctx, workflow):
+            raise PermissionError("Access denied to this workflow")
+
+    def _visible_workflow_ids(self, ctx: RequestContext) -> list[int]:
+        """Get IDs of all workflows visible to the user."""
+        conditions = ["w.created_by = ?", "s.assigned_to = ?"]
+        params: list[Any] = [ctx.user, ctx.user]
+        if ctx.roles:
+            placeholders = ",".join("?" for _ in ctx.roles)
+            conditions.append(f"s.required_role IN ({placeholders})")
+            params.extend(ctx.roles)
+        where = " OR ".join(conditions)
+        rows = self.db.fetchall_dict(self.db.execute(
+            f"SELECT DISTINCT w.workflow_id FROM workflows w LEFT JOIN workflow_steps s ON s.workflow_id = w.workflow_id WHERE {where}",
+            tuple(params)))
+        return [r["workflow_id"] for r in rows]
+
     def create_workflow(self, payload: dict[str, Any], ctx: RequestContext) -> dict[str, Any]:
+        if not self._has_permission(ctx, PERM_WORKFLOW_CREATE):
+            raise PermissionError("Your role does not have permission to create workflows")
         title = str(payload.get("title", "")).strip()
         if not title or len(title) > MAX_TITLE_LENGTH:
             raise ValueError(f"Title is required and must be at most {MAX_TITLE_LENGTH} characters")
@@ -328,7 +405,7 @@ class AppService:
                 self._notify(workflow_id, "WorkflowLaunched", recipients, {"title": title})
             self._store_document(workflow_id, payload.get("document"), ctx, status)
             self.db.commit()
-            return self.get_workflow(workflow_id)
+            return self.get_workflow(workflow_id, ctx)
         except Exception:
             self.db.rollback()
             raise
@@ -360,13 +437,25 @@ class AppService:
         )
         self._audit("workflow_document", str(workflow_id), "upload", ctx.user, {"path": unc_path, "isGolden": bool(is_golden)})
 
-    def list_workflows(self) -> list[dict[str, Any]]:
-        return self.db.fetchall_dict(self.db.execute("SELECT * FROM workflows ORDER BY workflow_id DESC"))
+    def list_workflows(self, ctx: RequestContext) -> list[dict[str, Any]]:
+        if self._has_permission(ctx, PERM_WORKFLOW_VIEW_ALL):
+            return self.db.fetchall_dict(self.db.execute("SELECT * FROM workflows ORDER BY workflow_id DESC"))
+        conditions = ["w.created_by = ?", "s.assigned_to = ?"]
+        params: list[Any] = [ctx.user, ctx.user]
+        if ctx.roles:
+            placeholders = ",".join("?" for _ in ctx.roles)
+            conditions.append(f"s.required_role IN ({placeholders})")
+            params.extend(ctx.roles)
+        where = " OR ".join(conditions)
+        return self.db.fetchall_dict(self.db.execute(
+            f"SELECT DISTINCT w.* FROM workflows w LEFT JOIN workflow_steps s ON s.workflow_id = w.workflow_id WHERE {where} ORDER BY w.workflow_id DESC",
+            tuple(params)))
 
-    def get_workflow(self, workflow_id: int) -> dict[str, Any]:
+    def get_workflow(self, workflow_id: int, ctx: RequestContext) -> dict[str, Any]:
         workflow = self.db.fetchone_dict(self.db.execute("SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)))
         if not workflow:
             raise KeyError("Workflow not found")
+        self._require_workflow_access(workflow_id, ctx, workflow)
         workflow["documents"] = self.db.fetchall_dict(self.db.execute("SELECT * FROM workflow_documents WHERE workflow_id = ? ORDER BY version", (workflow_id,)))
         workflow["steps"] = self.db.fetchall_dict(self.db.execute("SELECT * FROM workflow_steps WHERE workflow_id = ? ORDER BY sequence_order, step_id", (workflow_id,)))
         workflow["history"] = self.db.fetchall_dict(self.db.execute("SELECT * FROM status_history WHERE workflow_id = ? ORDER BY history_id", (workflow_id,)))
@@ -380,6 +469,8 @@ class AppService:
         current = self.db.fetchone_dict(self.db.execute("SELECT current_status, created_by FROM workflows WHERE workflow_id = ?", (workflow_id,)))
         if not current:
             raise KeyError("Workflow not found")
+        if not self._has_permission(ctx, PERM_WORKFLOW_MANAGE_ALL) and current["created_by"] != ctx.user:
+            raise PermissionError("Only the workflow creator or an Admin can update status")
         old = current["current_status"]
         self.db.execute("UPDATE workflows SET current_status = ?, updated_date = ? WHERE workflow_id = ?", (status, utc_now(), workflow_id))
         self.db.execute("INSERT INTO status_history(workflow_id, old_status, new_status, changed_by, changed_at, reason) VALUES (?, ?, ?, ?, ?, ?)", (workflow_id, old, status, ctx.user, utc_now(), reason))
@@ -387,9 +478,11 @@ class AppService:
         if status in {"Rejected", "Cancelled", "Archived"}:
             self._notify(workflow_id, "WorkflowStatusChanged", [current["created_by"]], {"status": status})
         self.db.commit()
-        return self.get_workflow(workflow_id)
+        return self.get_workflow(workflow_id, ctx)
 
     def set_hold(self, workflow_id: int, hold: bool, reason: str, ctx: RequestContext) -> dict[str, Any]:
+        if not self._has_permission(ctx, PERM_WORKFLOW_MANAGE_ALL):
+            raise PermissionError("Admin role required to set hold")
         row = self.db.fetchone_dict(self.db.execute("SELECT * FROM workflows WHERE workflow_id = ?", (workflow_id,)))
         if not row:
             raise KeyError("Workflow not found")
@@ -398,18 +491,19 @@ class AppService:
         if hold:
             self._notify(workflow_id, "WorkflowHold", [row["created_by"]], {"reason": reason})
         self.db.commit()
-        return self.get_workflow(workflow_id)
+        return self.get_workflow(workflow_id, ctx)
 
     def add_document(self, workflow_id: int, payload: dict[str, Any], ctx: RequestContext) -> dict[str, Any]:
-        wf = self.db.fetchone_dict(self.db.execute("SELECT current_status FROM workflows WHERE workflow_id = ?", (workflow_id,)))
+        wf = self.db.fetchone_dict(self.db.execute("SELECT current_status, created_by FROM workflows WHERE workflow_id = ?", (workflow_id,)))
         if not wf:
             raise KeyError("Workflow not found")
+        self._require_workflow_access(workflow_id, ctx, wf)
         self._store_document(workflow_id, payload, ctx, wf["current_status"])
         if payload.get("resubmission", False):
             self.db.execute("UPDATE workflows SET resubmitted = 1, current_status = 'In Review', updated_date = ? WHERE workflow_id = ?", (utc_now(), workflow_id))
             self.db.execute("INSERT INTO status_history(workflow_id, old_status, new_status, changed_by, changed_at, reason) VALUES (?, ?, ?, ?, ?, ?)", (workflow_id, wf["current_status"], "In Review", ctx.user, utc_now(), "Resubmission"))
         self.db.commit()
-        return self.get_workflow(workflow_id)
+        return self.get_workflow(workflow_id, ctx)
 
     def decide_step(self, step_id: int, payload: dict[str, Any], ctx: RequestContext) -> dict[str, Any]:
         decision = payload["decision"]
@@ -441,29 +535,70 @@ class AppService:
                 self.db.execute("INSERT INTO status_history(workflow_id, old_status, new_status, changed_by, changed_at, reason) VALUES (?, ?, ?, ?, ?, ?)", (step["workflow_id"], workflow["current_status"], "Archived", ctx.user, utc_now(), "All approvals complete"))
                 self._notify(step["workflow_id"], "WorkflowCompleted", [workflow["created_by"]], {})
         self.db.commit()
-        return self.get_workflow(step["workflow_id"])
+        return self.get_workflow(step["workflow_id"], ctx)
 
-    def dashboard_summary(self) -> dict[str, Any]:
-        placeholders = ",".join("?" for _ in IN_PROCESS_STATUSES)
-        in_process = self.db.fetchone_dict(self.db.execute(f"SELECT COUNT(*) AS c FROM workflows WHERE current_status IN ({placeholders})", tuple(IN_PROCESS_STATUSES)))
-        pending = self.db.fetchone_dict(self.db.execute("SELECT COUNT(*) AS c FROM workflow_steps WHERE step_status = 'Pending'"))
-        rejected = self.db.fetchone_dict(self.db.execute("SELECT COUNT(*) AS c FROM workflows WHERE current_status = 'Rejected' AND resubmitted = 0"))
+    def dashboard_summary(self, ctx: RequestContext) -> dict[str, Any]:
+        if self._has_permission(ctx, PERM_DASHBOARD_FULL):
+            status_ph = ",".join("?" for _ in IN_PROCESS_STATUSES)
+            in_process = self.db.fetchone_dict(self.db.execute(f"SELECT COUNT(*) AS c FROM workflows WHERE current_status IN ({status_ph})", tuple(IN_PROCESS_STATUSES)))
+            pending = self.db.fetchone_dict(self.db.execute("SELECT COUNT(*) AS c FROM workflow_steps WHERE step_status = 'Pending'"))
+            rejected = self.db.fetchone_dict(self.db.execute("SELECT COUNT(*) AS c FROM workflows WHERE current_status = 'Rejected' AND resubmitted = 0"))
+            return {"workflowsInProcess": int(in_process["c"]), "pendingApprovals": int(pending["c"]), "correctionQueue": int(rejected["c"])}
+        visible_ids = self._visible_workflow_ids(ctx)
+        if not visible_ids:
+            return {"workflowsInProcess": 0, "pendingApprovals": 0, "correctionQueue": 0}
+        id_ph = ",".join("?" for _ in visible_ids)
+        status_ph = ",".join("?" for _ in IN_PROCESS_STATUSES)
+        in_process = self.db.fetchone_dict(self.db.execute(
+            f"SELECT COUNT(*) AS c FROM workflows WHERE workflow_id IN ({id_ph}) AND current_status IN ({status_ph})",
+            tuple(visible_ids) + tuple(IN_PROCESS_STATUSES)))
+        pending = self.db.fetchone_dict(self.db.execute(
+            f"SELECT COUNT(*) AS c FROM workflow_steps WHERE workflow_id IN ({id_ph}) AND step_status = 'Pending'",
+            tuple(visible_ids)))
+        rejected = self.db.fetchone_dict(self.db.execute(
+            f"SELECT COUNT(*) AS c FROM workflows WHERE workflow_id IN ({id_ph}) AND current_status = 'Rejected' AND resubmitted = 0",
+            tuple(visible_ids)))
         return {"workflowsInProcess": int(in_process["c"]), "pendingApprovals": int(pending["c"]), "correctionQueue": int(rejected["c"])}
 
-    def dashboard_pending(self) -> list[dict[str, Any]]:
+    def dashboard_pending(self, ctx: RequestContext) -> list[dict[str, Any]]:
+        if self._has_permission(ctx, PERM_DASHBOARD_FULL):
+            return self.db.fetchall_dict(
+                self.db.execute(
+                    """SELECT s.step_id, s.required_role, s.assigned_to, s.assigned_date, w.workflow_id, w.title
+                       FROM workflow_steps s JOIN workflows w ON w.workflow_id = s.workflow_id
+                       WHERE s.step_status = 'Pending' ORDER BY s.assigned_date"""
+                )
+            )
+        conditions = ["s.assigned_to = ?"]
+        params: list[Any] = [ctx.user]
+        if ctx.roles:
+            placeholders = ",".join("?" for _ in ctx.roles)
+            conditions.append(f"s.required_role IN ({placeholders})")
+            params.extend(ctx.roles)
+        where = " OR ".join(conditions)
         return self.db.fetchall_dict(
             self.db.execute(
-                """SELECT s.step_id, s.required_role, s.assigned_to, s.assigned_date, w.workflow_id, w.title
-                   FROM workflow_steps s JOIN workflows w ON w.workflow_id = s.workflow_id
-                   WHERE s.step_status = 'Pending' ORDER BY s.assigned_date"""
+                f"""SELECT s.step_id, s.required_role, s.assigned_to, s.assigned_date, w.workflow_id, w.title
+                    FROM workflow_steps s JOIN workflows w ON w.workflow_id = s.workflow_id
+                    WHERE s.step_status = 'Pending' AND ({where}) ORDER BY s.assigned_date""",
+                tuple(params),
             )
         )
 
-    def dashboard_aging(self) -> list[dict[str, Any]]:
+    def dashboard_aging(self, ctx: RequestContext) -> list[dict[str, Any]]:
         thresholds = sorted(int(r["value"]) for r in self.db.fetchall_dict(self.db.execute("SELECT value FROM system_settings WHERE key LIKE 'aging_threshold_%'")))
         items: list[dict[str, Any]] = []
         now = datetime.now(timezone.utc)
-        rows = self.db.fetchall_dict(self.db.execute("SELECT workflow_id, title, created_date, current_status FROM workflows"))
+        if self._has_permission(ctx, PERM_DASHBOARD_FULL):
+            rows = self.db.fetchall_dict(self.db.execute("SELECT workflow_id, title, created_date, current_status FROM workflows"))
+        else:
+            visible_ids = self._visible_workflow_ids(ctx)
+            if not visible_ids:
+                return []
+            id_ph = ",".join("?" for _ in visible_ids)
+            rows = self.db.fetchall_dict(self.db.execute(
+                f"SELECT workflow_id, title, created_date, current_status FROM workflows WHERE workflow_id IN ({id_ph})",
+                tuple(visible_ids)))
         for row in rows:
             created = datetime.strptime(row["created_date"], ISO).replace(tzinfo=timezone.utc)
             days = (now - created).days
@@ -474,8 +609,8 @@ class AppService:
 
     def run_aging_reminders(self, ctx: RequestContext) -> dict[str, Any]:
         self._require_admin(ctx)
-        aging = self.dashboard_aging()
-        pending_map = {p["workflow_id"]: p for p in self.dashboard_pending()}
+        aging = self.dashboard_aging(ctx)
+        pending_map = {p["workflow_id"]: p for p in self.dashboard_pending(ctx)}
         sent = 0
         for item in aging:
             wid = item["workflowId"]
@@ -492,8 +627,12 @@ class AppService:
         self.db.commit()
         return {"sent": sent}
 
-    def correction_queue(self) -> list[dict[str, Any]]:
-        return self.db.fetchall_dict(self.db.execute("SELECT workflow_id, title, updated_date FROM workflows WHERE current_status = 'Rejected' AND resubmitted = 0 ORDER BY updated_date DESC"))
+    def correction_queue(self, ctx: RequestContext) -> list[dict[str, Any]]:
+        if self._has_permission(ctx, PERM_DASHBOARD_FULL):
+            return self.db.fetchall_dict(self.db.execute("SELECT workflow_id, title, updated_date FROM workflows WHERE current_status = 'Rejected' AND resubmitted = 0 ORDER BY updated_date DESC"))
+        return self.db.fetchall_dict(self.db.execute(
+            "SELECT workflow_id, title, updated_date FROM workflows WHERE current_status = 'Rejected' AND resubmitted = 0 AND created_by = ? ORDER BY updated_date DESC",
+            (ctx.user,)))
 
     def get_settings(self) -> dict[str, str]:
         return {r["key"]: r["value"] for r in self.db.fetchall_dict(self.db.execute("SELECT key, value FROM system_settings ORDER BY key"))}
